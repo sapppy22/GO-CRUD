@@ -27,15 +27,17 @@ type Todo struct {
 var collection *mongo.Collection
 
 func main() {
-	fmt.Println("🚀 Starting Go Fiber Todo API")
+	fmt.Println(" Starting Go Fiber Todo API")
 
-	// Load env
-	err := godotenv.Load(".env")
-	if err != nil {
-		log.Fatal("⚠️ Error loading .env file:", err)
+	if os.Getenv("ENV") != "production" {
+		// Load env file if not in production
+		err := godotenv.Load(".env")
+		if err != nil {
+			log.Fatal("Error loading .env file:", err)
+		}
 	}
 
-	// Connect MongoDB
+	//  MongoDB connection
 	MONGODB_URI := os.Getenv("MONGODB_URI")
 	clientOptions := options.Client().ApplyURI(MONGODB_URI)
 	client, err := mongo.Connect(context.Background(), clientOptions)
@@ -48,12 +50,12 @@ func main() {
 	}
 	defer client.Disconnect(context.Background())
 
-	fmt.Println("✅ Connected to MongoDB Atlas")
+	fmt.Println(" Connected to MongoDB Atlas")
 
 	// Select collection
 	collection = client.Database("golang_db").Collection("todos")
 
-	// Create TTL index for expiry
+	// Creating TTL index for expiry
 	indexModel := mongo.IndexModel{
 		Keys:    bson.M{"expiresAt": 1},
 		Options: options.Index().SetExpireAfterSeconds(0),
@@ -63,9 +65,16 @@ func main() {
 		log.Fatal("⚠️ Failed to create TTL index:", err)
 	}
 
-	// Fiber app
+	// Creating Fiber app
 	app := fiber.New()
 
+	// Enable CORS
+	//app.Use(cors.New(cors.Config{
+	//	AllowOrigins: "http://localhost:5173",
+	//	AllowHeaders: "Origin, Content-Type, Accept",
+	//}))
+
+	// Routes
 	app.Get("/api/todos", getTodos)
 	app.Post("/api/todos", createTodo)
 	app.Patch("/api/todos/:id", updateTodo)
@@ -76,10 +85,15 @@ func main() {
 	if port == "" {
 		port = "5000"
 	}
+
+	if os.Getenv("ENV") == "production" {
+		app.Static("/", "./client/dist")
+	}
+
 	log.Fatal(app.Listen("0.0.0.0:" + port))
 }
 
-// Get all todos
+// Get Todos
 func getTodos(c *fiber.Ctx) error {
 	var todos []Todo
 
@@ -100,7 +114,7 @@ func getTodos(c *fiber.Ctx) error {
 	return c.JSON(todos)
 }
 
-// Create todo with custom expiry
+// Create Todos
 func createTodo(c *fiber.Ctx) error {
 	var input struct {
 		Body      string `json:"body"`
@@ -123,7 +137,6 @@ func createTodo(c *fiber.Ctx) error {
 		UpdatedAt: time.Now(),
 	}
 
-	// expiry logic
 	if input.ExpiresIn > 0 {
 		todo.ExpiresAt = time.Now().Add(time.Duration(input.ExpiresIn) * time.Minute)
 	} else {
@@ -140,7 +153,7 @@ func createTodo(c *fiber.Ctx) error {
 	return c.Status(201).JSON(todo)
 }
 
-// Update todo (mark completed / update body)
+// Update todos
 func updateTodo(c *fiber.Ctx) error {
 	id := c.Params("id")
 	objectID, err := primitive.ObjectIDFromHex(id)
@@ -175,7 +188,7 @@ func updateTodo(c *fiber.Ctx) error {
 	return c.Status(200).JSON(fiber.Map{"success": true})
 }
 
-// Delete todo
+// Delete todos
 func deleteTodo(c *fiber.Ctx) error {
 	id := c.Params("id")
 	objectID, err := primitive.ObjectIDFromHex(id)
