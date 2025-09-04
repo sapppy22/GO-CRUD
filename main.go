@@ -29,67 +29,71 @@ var collection *mongo.Collection
 func main() {
 	fmt.Println(" Starting Go Fiber Todo API")
 
+	// Load .env only in development
 	if os.Getenv("ENV") != "production" {
-		// Load env file if not in production
-		err := godotenv.Load(".env")
-		if err != nil {
-			log.Println("Error loading .env file:not found using system variables instead")
+		if err := godotenv.Load(".env"); err != nil {
+			log.Println("No .env file found, using system variables")
 		}
 	}
 
-	//  MongoDB connection
+	// MongoDB URI check
 	MONGODB_URI := os.Getenv("MONGODB_URI")
+	if MONGODB_URI == "" {
+		log.Fatal("Missing MONGODB_URI environment variable")
+	}
+
+	// Connect to MongoDB
 	clientOptions := options.Client().ApplyURI(MONGODB_URI)
 	client, err := mongo.Connect(context.Background(), clientOptions)
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = client.Ping(context.Background(), nil)
-	if err != nil {
-		log.Fatal(err)
+
+	if err := client.Ping(context.Background(), nil); err != nil {
+		log.Fatal("MongoDB connection failed:", err)
 	}
 	defer client.Disconnect(context.Background())
-
-	fmt.Println(" Connected to MongoDB Atlas")
+	fmt.Println("Connected to MongoDB Atlas")
 
 	// Select collection
 	collection = client.Database("golang_db").Collection("todos")
 
-	// Creating TTL index for expiry
+	// TTL Index for expiry
 	indexModel := mongo.IndexModel{
 		Keys:    bson.M{"expiresAt": 1},
 		Options: options.Index().SetExpireAfterSeconds(0),
 	}
-	_, err = collection.Indexes().CreateOne(context.Background(), indexModel)
-	if err != nil {
-		log.Fatal("⚠️ Failed to create TTL index:", err)
+	if _, err := collection.Indexes().CreateOne(context.Background(), indexModel); err != nil {
+		log.Fatal("Failed to create TTL index:", err)
 	}
 
-	// Creating Fiber app
+	// Fiber app
 	app := fiber.New()
 
-	// Enable CORS
-	//app.Use(cors.New(cors.Config{
-	//	AllowOrigins: "http://localhost:5173",
-	//	AllowHeaders: "Origin, Content-Type, Accept",
-	//}))
-
-	// Routes
+	// API routes
 	app.Get("/api/todos", getTodos)
 	app.Post("/api/todos", createTodo)
 	app.Patch("/api/todos/:id", updateTodo)
 	app.Delete("/api/todos/:id", deleteTodo)
 
-	// Port
+	// Serve frontend in production
+	if os.Getenv("ENV") == "production" {
+		if _, err := os.Stat("./client/dist"); err == nil {
+			app.Static("/", "./client/dist")
+			app.Get("/*", func(c *fiber.Ctx) error {
+				return c.SendFile("./client/dist/index.html")
+			})
+			fmt.Println("Serving static files from ./client/dist")
+		} else {
+			fmt.Println("No frontend build found at ./client/dist")
+		}
+	}
+
+	// Port config
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "5000"
 	}
-
-	if os.Getenv("ENV") == "production" {
-		app.Static("/", "./client/dist")
-	}
-
 	log.Fatal(app.Listen("0.0.0.0:" + port))
 }
 
@@ -149,11 +153,10 @@ func createTodo(c *fiber.Ctx) error {
 	}
 
 	todo.ID = insertResult.InsertedID.(primitive.ObjectID)
-
 	return c.Status(201).JSON(todo)
 }
 
-// Update todos
+// Update Todos
 func updateTodo(c *fiber.Ctx) error {
 	id := c.Params("id")
 	objectID, err := primitive.ObjectIDFromHex(id)
@@ -188,7 +191,7 @@ func updateTodo(c *fiber.Ctx) error {
 	return c.Status(200).JSON(fiber.Map{"success": true})
 }
 
-// Delete todos
+// Delete Todos
 func deleteTodo(c *fiber.Ctx) error {
 	id := c.Params("id")
 	objectID, err := primitive.ObjectIDFromHex(id)
